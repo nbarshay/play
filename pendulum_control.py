@@ -2,9 +2,12 @@ import mujoco as mj
 from mujoco.glfw import glfw
 import numpy as np
 import os
-from math import pi
+from math import pi, sin
+import math
 
-xml_path = 'manipulator.xml' #xml file (assumes this is in the same folder as this file)
+xml_path = '2D_simple_pendulum.xml' #xml file (assumes this is in the same folder as this file)
+simend = 10 #simulation time
+print_camera_config = 0 #set to 1 to print camera config
                         #this is useful for initializing view of the model)
 
 # For callback functions
@@ -19,8 +22,47 @@ def init_controller(model,data):
     pass
 
 def controller(model, data):
+    time = data.time
+
     #put the controller here. This function is called inside the simulation.
-    pass
+    #pass
+
+    #spring-like position servo
+    # set_position_servo(1, 10)
+    # data.ctrl[1] = np.pi  #position
+
+    #speed control; velocity servo
+    # set_velocity_servo(2,100)
+    # data.ctrl[2] = 0.5  #velocity
+
+    #position control; position/velocity servo
+    # set_position_servo(1, 100)
+    # set_velocity_servo(2,10)
+    # data.ctrl[1] = np.pi #position
+   
+    target = sin(time*2*pi/10.0) * pi
+
+
+    #torque control;
+    set_torque_servo(0, 1)
+    # data.ctrl[0] = -10*(data.qpos[0]-np.pi)  #torque (spring)
+    # data.ctrl[0] = -100*(data.qvel[0]-0.5) #speed control]
+    data.ctrl[0] = -100*(data.qpos[0]-target) -10*data.qvel[0] #position control
+
+def set_torque_servo(actuator_no, flag):
+    if (flag==0):
+        model.actuator_gainprm[actuator_no, 0] = 0
+    else:
+        model.actuator_gainprm[actuator_no, 0] = 1
+
+def set_position_servo(actuator_no, kp):
+    model.actuator_gainprm[actuator_no, 0] = kp
+    model.actuator_biasprm[actuator_no, 1] = -kp
+
+def set_velocity_servo(actuator_no, kv):
+    model.actuator_gainprm[actuator_no, 0] = kv
+    model.actuator_biasprm[actuator_no, 2] = -kv
+
 
 def keyboard(window, key, scancode, act, mods):
     if act == glfw.PRESS and key == glfw.KEY_BACKSPACE:
@@ -122,10 +164,14 @@ glfw.set_mouse_button_callback(window, mouse_button)
 glfw.set_scroll_callback(window, scroll)
 
 # Example on how to set camera configuration
-#initialize the controller here. This function is called once, in the beginning
+# cam.azimuth = 90
+# cam.elevation = -45
+# cam.distance = 2
+# cam.lookat = np.array([0.0, 0.0, 0])
+cam.azimuth = -90.68741727466428 ; cam.elevation = -2.8073894766455036 ; cam.distance =  5.457557373462702
+cam.lookat =np.array([ 0.0 , 0.0 , 3.0 ])
 
-cam.azimuth = 89.83044433593757 ; cam.elevation = -89.0 ; cam.distance =  5.04038754800176
-cam.lookat =np.array([ 0.0 , 0.0 , 0.0 ])
+data.qpos[0] = np.pi/2
 
 #initialize the controller
 init_controller(model,data)
@@ -133,44 +179,24 @@ init_controller(model,data)
 #set the controller
 mj.set_mjcb_control(controller)
 
-N = 500
-q0_end = pi/2
-q1_end = pi/2
-q0 = (-np.cos(np.linspace(0,2*pi,N))/2.0+0.5) * q0_end
-q1 = (-np.cos(np.linspace(0,2*pi,N))/2.0+0.5) * q1_end
-
-print(q0[0], q1[0])
-
-#initialize
-data.qpos[0] = q0[0]
-data.qpos[1] = q1[0]
-i = 0;
-time = 0
-dt = 0.001;
-
 while not glfw.window_should_close(window):
-    time_prev = time
+    time_prev = data.time
 
-    while (time - time_prev < 1.0/60.0):
-        data.qpos[0] = q0[i];
-        data.qpos[1] = q1[i];
-        mj.mj_forward(model,data)
-        time +=dt
-        # mj.mj_step(model, data)
+    while (data.time - time_prev < 1.0/60.0):
+        mj.mj_step(model, data)
 
-    i +=1
-
-    #print(data.site_xpos[0])
-    
-    if (i>=N):
-        i = 0
-        #break;
+    if (data.time>=simend):
+        break;
 
     # get framebuffer viewport
     viewport_width, viewport_height = glfw.get_framebuffer_size(
         window)
     viewport = mj.MjrRect(0, 0, viewport_width, viewport_height)
 
+    #print camera configuration (help to initialize the view)
+    if (print_camera_config==1):
+        print('cam.azimuth =',cam.azimuth,';','cam.elevation =',cam.elevation,';','cam.distance = ',cam.distance)
+        print('cam.lookat =np.array([',cam.lookat[0],',',cam.lookat[1],',',cam.lookat[2],'])')
 
     # Update scene and render
     mj.mjv_updateScene(model, data, opt, None, cam,

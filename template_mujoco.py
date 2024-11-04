@@ -2,9 +2,10 @@ import mujoco as mj
 from mujoco.glfw import glfw
 import numpy as np
 import os
-from math import pi
 
-xml_path = 'manipulator.xml' #xml file (assumes this is in the same folder as this file)
+xml_path = 'hello.xml' #xml file (assumes this is in the same folder as this file)
+simend = 5 #simulation time
+print_camera_config = 0 #set to 1 to print camera config
                         #this is useful for initializing view of the model)
 
 # For callback functions
@@ -122,10 +123,10 @@ glfw.set_mouse_button_callback(window, mouse_button)
 glfw.set_scroll_callback(window, scroll)
 
 # Example on how to set camera configuration
-#initialize the controller here. This function is called once, in the beginning
-
-cam.azimuth = 89.83044433593757 ; cam.elevation = -89.0 ; cam.distance =  5.04038754800176
-cam.lookat =np.array([ 0.0 , 0.0 , 0.0 ])
+# cam.azimuth = 90
+# cam.elevation = -45
+# cam.distance = 2
+# cam.lookat = np.array([0.0, 0.0, 0])
 
 #initialize the controller
 init_controller(model,data)
@@ -133,44 +134,24 @@ init_controller(model,data)
 #set the controller
 mj.set_mjcb_control(controller)
 
-N = 500
-q0_end = pi/2
-q1_end = pi/2
-q0 = (-np.cos(np.linspace(0,2*pi,N))/2.0+0.5) * q0_end
-q1 = (-np.cos(np.linspace(0,2*pi,N))/2.0+0.5) * q1_end
-
-print(q0[0], q1[0])
-
-#initialize
-data.qpos[0] = q0[0]
-data.qpos[1] = q1[0]
-i = 0;
-time = 0
-dt = 0.001;
-
 while not glfw.window_should_close(window):
-    time_prev = time
+    time_prev = data.time
 
-    while (time - time_prev < 1.0/60.0):
-        data.qpos[0] = q0[i];
-        data.qpos[1] = q1[i];
-        mj.mj_forward(model,data)
-        time +=dt
-        # mj.mj_step(model, data)
+    while (data.time - time_prev < 1.0/60.0):
+        mj.mj_step(model, data)
 
-    i +=1
-
-    #print(data.site_xpos[0])
-    
-    if (i>=N):
-        i = 0
-        #break;
+    if (data.time>=simend):
+        break;
 
     # get framebuffer viewport
     viewport_width, viewport_height = glfw.get_framebuffer_size(
         window)
     viewport = mj.MjrRect(0, 0, viewport_width, viewport_height)
 
+    #print camera configuration (help to initialize the view)
+    if (print_camera_config==1):
+        print('cam.azimuth =',cam.azimuth,';','cam.elevation =',cam.elevation,';','cam.distance = ',cam.distance)
+        print('cam.lookat =np.array([',cam.lookat[0],',',cam.lookat[1],',',cam.lookat[2],'])')
 
     # Update scene and render
     mj.mjv_updateScene(model, data, opt, None, cam,
@@ -184,3 +165,4 @@ while not glfw.window_should_close(window):
     glfw.poll_events()
 
 glfw.terminate()
+
