@@ -1,6 +1,6 @@
 <!-- https://mujoco.readthedocs.io/en/latest/overview.html?highlight=hello.xml#examples -->
 <mujoco>
-  <option gravity = "0 0 -9.81" />
+  <option gravity = "0 0 0" />
    <worldbody>
       <light diffuse="0 0 0" pos="0 0 10" dir="0 0 -1"/>
       <body pos="0 0 0" euler="0 180 0">

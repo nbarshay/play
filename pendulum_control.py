@@ -5,8 +5,8 @@ import os
 from math import pi, sin
 import math
 
-xml_path = '2D_simple_pendulum.xml' #xml file (assumes this is in the same folder as this file)
-simend = 10 #simulation time
+xml_path = '2D_double_pendulum.xml' #xml file (assumes this is in the same folder as this file)
+simend = 20 #simulation time
 print_camera_config = 0 #set to 1 to print camera config
                         #this is useful for initializing view of the model)
 
@@ -40,14 +40,18 @@ def controller(model, data):
     # set_velocity_servo(2,10)
     # data.ctrl[1] = np.pi #position
    
-    target = sin(time*2*pi/10.0) * pi
 
+    a0_target = math.sin(time*2*pi/4.0) * pi/4
 
     #torque control;
     set_torque_servo(0, 1)
+    set_torque_servo(1, 1)
     # data.ctrl[0] = -10*(data.qpos[0]-np.pi)  #torque (spring)
     # data.ctrl[0] = -100*(data.qvel[0]-0.5) #speed control]
-    data.ctrl[0] = -100*(data.qpos[0]-target) -10*data.qvel[0] #position control
+    data.ctrl[0] = -400*(data.qpos[0]-a0_target) - 40*data.qvel[0] #position control
+
+    data.ctrl[1] = (-100*(data.qpos[1]) -10*data.qvel[1]) * 0.02 #position control
+    #data.ctrl[1] = -2*(data.qpos[1])**2 * (1.0 if data.qpos[1] > 0 else -1.0) 
 
 def set_torque_servo(actuator_no, flag):
     if (flag==0):
@@ -168,10 +172,11 @@ glfw.set_scroll_callback(window, scroll)
 # cam.elevation = -45
 # cam.distance = 2
 # cam.lookat = np.array([0.0, 0.0, 0])
-cam.azimuth = -90.68741727466428 ; cam.elevation = -2.8073894766455036 ; cam.distance =  5.457557373462702
-cam.lookat =np.array([ 0.0 , 0.0 , 3.0 ])
+cam.azimuth = 90 ; cam.elevation = 5 ; cam.distance =  6
+cam.lookat =np.array([ 0.0 , 0.0 , 0.0 ])
 
-data.qpos[0] = np.pi/2
+data.qpos[0] = 0
+data.qpos[1] = 0
 
 #initialize the controller
 init_controller(model,data)

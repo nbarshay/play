@@ -83,9 +83,6 @@ def controller(model, data):
     qdot_ref1 = a_jnt1[1] + 2 * a_jnt1[2] * \
         time + 3 * a_jnt1[3]*(time**2)
 
-    #pd control
-    # data.ctrl[0] = -500*(data.qpos[0]-q_ref0)-50*(data.qvel[0]-qdot_ref0)
-    # data.ctrl[1] = -500*(data.qpos[1]-q_ref1)-50*(data.qvel[1]-qdot_ref1)
 
     #model-based control (feedback linearization)
     #tau = M*(PD-control) + f

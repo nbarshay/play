@@ -5,6 +5,7 @@ import numpy as np
 from math import cos, pi, sqrt, exp, log, pi
 import random
 import matplotlib.pyplot as plt
+import scipy
 
 import torch
 from torch import nn
@@ -570,7 +571,7 @@ def makeNetwork(powers, sec_per_idx):
 
     out_norm = BrainNodeMaxDecay(raw_out, 10.0 / sec_per_idx)
 
-    return BrainNodeLambda([raw_out, out_norm], lambda a, b:  a / b if b>0.0 and a/b>0.25 else 0.0)
+    return BraanNodeLambda([raw_out, out_norm], lambda a, b:  a / b if b>0.0 and a/b>0.25 else 0.0)
     
 
 def getRotMatrix(theta):
@@ -619,63 +620,218 @@ class DanceCreature(object):
 #-------------------------------------------
 
 
+def gatherStuff():
+    rate, data = scipy.io.wavfile.read('out_there.wav')
+    powers, sec_per_idx = getTotalSoundPower(data[rate*10:rate*40], rate)
+    spikes = evalNetworkDf(makeBasicNetwork(powers, sec_per_idx), Dataframe({'a': powers}))
+    return rate, data, powers, sec_per_idx, spikes
+
+"""
+- len(return) = radius*2
+- wavelength is in indices
+- phase_shift is 0 to 1
+
+TODO ensure center is at radius (both envelope and base wavelet)
+"""
+def getLocalWavelet(radius, wavelength, phase_shift, do_envelope):
+    raw_x = torch.arange(2*radius)
+    x = raw_x * 2*pi/wavelength + phase_shift*2*pi
+    for i in range(2):
+        x = x + torch.sin(x)
+    ret = torch.cos( x ) + 1.0
+
+    if do_envelope:
+        ret = ret * (radius - torch.abs(radius-raw_x)) / radius
+
+    return ret
+
+
+
 
 class TestModule(nn.Module):
     def __init__(self, hits, sec_per_idx) -> None:
         super().__init__()
         self.hits = torch.tensor(hits)
+
+        self.n = len(hits)
+
         self.sec_per_idx = sec_per_idx
 
-        self.start_bps = 1.0
+        self.radius = int(4.0 / sec_per_idx) #TODO hack
 
-        self.params = nn.Parameter(torch.tensor(np.zeros(len(self.hits))))
+        self.base_wl = 1.0 / sec_per_idx #60bpm
 
-    def getWheel(self, bps_shifts):
-        self.bps = self.start_bps + torch.cumsum(bps_shifts, 0)
-        return torch.cumsum(self.bps * self.sec_per_idx, 0)
+        self.param_n = self.n // self.radius
+
+        self.wls = nn.Parameter(torch.ones(self.param_n) * self.base_wl)
+
+        self.pss = nn.Parameter(torch.ones(self.param_n) * 10.0)      #start at 10 for nice normalization
+
+
+        """
+        self.hits = torch.tensor(hits)
+        self.sec_per_idx = sec_per_idx
+
+        init = np.zeros(len(self.hits))
+        init[0] = 1.0
+
+        self.params = nn.Parameter(torch.tensor(init))
+        """
+
+        print(f'{sec_per_idx=} {self.radius=} {self.base_wl=} {self.param_n=}')
+
+
+    def getCombo(self):
+        cur_n = self.n + 2*self.radius
+        res = torch.zeros(cur_n)
+
+        for i in range(self.param_n):
+            wavelet = getLocalWavelet(self.radius, self.wls[i], self.pss[i], True)
+            begin = i*self.radius
+            end = (i+2)*self.radius
+            #res[begin:end] += wavelet
+            res = res + torch.nn.functional.pad(wavelet, (begin, cur_n - begin - 2*self.radius))
+        return res[:self.n]
         
-    
-    def getWavelet(self, bps_shifts):
-        a = 0.05
-        loc = torch.fmod(self.getWheel(bps_shifts) + a, 1.0)
-        b = 0.5-a
-        bc = 2*a+b
-        return torch.where(torch.abs(a-loc) < a, ((a-torch.abs(a-loc))/a) * b/a,  -( (b-torch.abs(bc-loc))/b ) )
+    def forward(self, verbose=False):
 
+        spike_reward = torch.sum(self.getCombo() * self.hits) / (torch.mean(self.getCombo()) * torch.mean(self.hits) * self.n)
 
-    def forward(self):
-        wheel = self.params['wheel']
-        time_diffs_raw = (wheel[1:] - wheel[:-1])/self.sec_per_idx
-        time_diffs = torch.where(time_diffs_raw > 0.0, time_diffs_raw, time_diffs_raw+1.0)
-
-        wheel_penalties = torch.square(torch.clamp(wheel - 1.0, min=0.0)) + torch.square(torch.clamp(-wheel, min=0.0))
-
-        bpms = (1.0 / (time_diffs + 1.0/100.0)) * 60
-
-        bpm_penalties = torch.square(torch.clamp((bpms-120)/40.0, min=0.00)) + torch.square(torch.clamp((60-bpms)/40.0, min=0.0))
-
-        bpm_change = bpms[1:] - bpms[:-1]
-
-        bpm_change_penalties = torch.abs(bpm_change)
-
-        hit_rewards = torch.clamp((0.1 - torch.abs(wheel - 0.5))*10.0, min=0.0) * self.hits
-
-        #print(torch.sum(hit_rewards), torch.sum(bpm_penalties), torch.sum(wheel_penalties), torch.sum(bpm_change_penalties))
-        goodness = torch.sum(hit_rewards) - torch.sum(bpm_penalties) - torch.sum(wheel_penalties) - torch.sum(bpm_change_penalties)
-
-        return -goodness
+        return -spike_reward
 
 
 def doLearning(model):
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.00001)
 
     for i in range(10000):
         loss = model()
         if i%1000==0:
                 print(loss.item())
-
-        optimizer = torch.optim.Adam(model.parameters())
+                model(verbose=True)
 
         # Backpropagation
+        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        optimizer.zero_grad()
+
+
+
+
+def getLocalWavelet2(radius, wavelength, phase_shift, do_envelope):
+    raw_x = np.arange(2*radius)
+    x = raw_x * 2*pi/wavelength + phase_shift*2*pi
+    for i in range(2):
+        x = x + np.sin(x)
+    ret = np.cos( x ) + 1.0
+
+    if do_envelope:
+        ret = ret * (radius - np.abs(radius-raw_x)) / radius
+
+    return ret
+
+
+
+
+
+class TestModule2(object):
+    def __init__(self, hits, sec_per_idx) -> None:
+        self.hits = hits
+
+        self.n = len(hits)
+
+        self.sec_per_idx = sec_per_idx
+
+        self.radius = int(4.0 / sec_per_idx) #TODO hack
+
+        self.base_wl = 1.0 / sec_per_idx #60bpm
+
+        self.param_n = self.n // self.radius
+
+        self.params = np.empty((2, self.param_n))
+
+        self.wls = self.params[0, :]
+        self.wls[:] = self.base_wl
+
+        self.pss = self.params[1, :]
+        self.pss[:] = 10.0  #start at 10 for nice normalization
+
+        print(f'{sec_per_idx=} {self.radius=} {self.base_wl=} {self.param_n=}')
+
+    def getCombo(self):
+        cur_n = self.n + 2*self.radius
+        res = np.zeros(cur_n)
+
+        for i in range(self.param_n):
+            wavelet = getLocalWavelet2(self.radius, self.wls[i], self.pss[i], True)
+            begin = i*self.radius
+            end = (i+2)*self.radius
+            res[begin:end] += wavelet
+        return res[:self.n]
+        
+    def forward(self, verbose=False):
+        spike_reward = np.sum(self.getCombo() * self.hits) / (np.mean(self.getCombo()) * np.mean(self.hits) * self.n)
+
+        return -spike_reward
+
+def doLearning2(model):
+    params_shape = model.params.shape    
+    eval_cnt = 0
+
+    def fun(x_raw):
+        nonlocal eval_cnt
+        eval_cnt += 1
+        if eval_cnt%100==0:
+            print(f'{eval_cnt=} {model.forward()=}')
+            #model.forward(verbose=True)
+        
+        x = x_raw.reshape(params_shape)
+        model.params[:] = x
+        return model.forward()
+       
+    x0 = model.params.reshape(-1)
+    scipy.optimize.minimize(fun, x0)
+
+
+#----------------------
+
+
+def getPart(center, width, scale, ts):
+    def doOne(offset, prime):
+        x = (center - ts + offset) / (width/2.0)
+        if prime:
+            return scale * -2 * x * np.exp(-x**2)
+        else:
+            return scale * np.exp(-x**2)
+    
+    evals = np.vstack([doOne(x, False) for x in [-1, 0, 1]])
+    evals_prime = np.vstack([doOne(x, True) for x in [-1, 0, 1]] )
+
+    pick = np.argmax(evals, axis=0)
+    print(pick.shape)
+    print(pick)
+    print(evals.shape)
+
+    def proc(xs):
+        return xs[pick, np.arange(len(pick))]
+
+    return proc(evals), proc(evals_prime)
+
+
+
+
+
+
+"""
+class TestModule(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.secs_per_cycle = 4.0
+
+        self.n_wavelet = 6
+
+        self.params = nn.Parameter(torch.rand(self.n_wavelet, 3))
+
+"""
+
+
