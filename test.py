@@ -32,6 +32,8 @@ import shutil
 import json
 import csv
 
+from armsim import ArmSim, ArmSimReturn
+
 
 #-------------------------------------
 
@@ -781,9 +783,10 @@ def doLearning2(model):
     def fun(x_raw):
         nonlocal eval_cnt
         eval_cnt += 1
-        if eval_cnt%100==0:
+
+        if eval_cnt%1000==1:
             print(f'{eval_cnt=} {model.forward()=}')
-            #model.forward(verbose=True)
+            model.forward(verbose=True)
         
         x = x_raw.reshape(params_shape)
         model.params[:] = x
@@ -795,43 +798,89 @@ def doLearning2(model):
 
 #----------------------
 
-
+"""
+assume time runs from 0 to 1
+NOTE: only works with center and width in (0,1]
+"""
 def getPart(center, width, scale, ts):
-    def doOne(offset, prime):
-        x = (center - ts + offset) / (width/2.0)
-        if prime:
-            return scale * -2 * x * np.exp(-x**2)
-        else:
-            return scale * np.exp(-x**2)
+    x = (np.where(ts > center, ts - center, ts - center + 1.0)/width)
+
+    inside = ( 3*(x**2) - 2*(x**3) ) * (2*pi)
+
+    not_prime = ( np.sin( inside ) ) * scale
+
+    prime = ( np.cos( inside ) * ( (6*x - 6*(x**2)) * (2*pi) ) ) * scale/width
+
+    def maskit(xx):
+        return np.where( (x > 0.0) & (x < 1.0), xx, 0.0)
+
+    return maskit(not_prime), maskit(prime)
+
+def getPenalty(raw_vals, a_min, a_max):
+    vals = (raw_vals/(a_max-a_min)) - a_min
+    return np.square(np.maximum(np.maximum(vals - 1.0, 0.0 - vals), 0.0))*1e6
+
+
+class TestModule3(object):
+
+    def __init__(self, loop_sec=8.0, n_wavelet=10, n_joint=2) -> None:
+        self.loop_sec=loop_sec
+        self.n_wavelet = n_wavelet
+        self.n_joint = n_joint
+
+        self.params = np.random.uniform(size=(self.n_joint, self.n_wavelet, 3))
+        self.params[:,:,2] = self.params[:,:,2] * 2.0 - 1.0
+
+
+    @classmethod
+    def genStill(cls):
+        ret = cls()
+        ret.params[:,:,:2] = 1.0
+        ret.params[:,:,2] = 0.0 
+        return ret
+
+
+    """
+    Intention is an output beween -1 and 1
+    TODO: add this to optimization
+    """
+    def getCombo(self, joint_idx, ts):
+        res_f = np.zeros(len(ts))
+        res_fprime = np.zeros(len(ts))
+
+        for i in range(self.n_wavelet):
+            not_prime, prime = getPart(*self.params[joint_idx, i,:], ts)
+            res_f += not_prime
+            res_fprime += prime
+
+        return res_f, res_fprime
+         
+
+    """
+    Intention is an output in (-pi, pi)
+    """
+    def getTrajectory(self, joint_idx, t):
+        input_t = math.fmod(t/self.loop_sec, 1.0)
+
+        f, fp = self.getCombo(joint_idx, np.array([input_t]))
+
+        return f[0]*pi, fp[0]/self.loop_sec*pi
+
+    def forward(self, verbose=False):
+        def getBasicPenalty(jidx):
+            mean_sq_vel = np.mean(self.getCombo(jidx, np.linspace(0, 1.0, 500))[1]**2)
+            if verbose:
+                print(f'\t{jidx=} {mean_sq_vel=}')
+            return (mean_sq_vel - 10.0)**2
+
+        param_shape_penalties = getPenalty(self.params[:,:,:2], 0.0, 1.0)
+        param_shape_penalty = np.sum(param_shape_penalties)
+        if verbose:
+            print(f'\t{param_shape_penalty=}')
+
+            
+        return getBasicPenalty(0) + getBasicPenalty(1) + param_shape_penalty
+
+
+
     
-    evals = np.vstack([doOne(x, False) for x in [-1, 0, 1]])
-    evals_prime = np.vstack([doOne(x, True) for x in [-1, 0, 1]] )
-
-    pick = np.argmax(evals, axis=0)
-    print(pick.shape)
-    print(pick)
-    print(evals.shape)
-
-    def proc(xs):
-        return xs[pick, np.arange(len(pick))]
-
-    return proc(evals), proc(evals_prime)
-
-
-
-
-
-
-"""
-class TestModule(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.secs_per_cycle = 4.0
-
-        self.n_wavelet = 6
-
-        self.params = nn.Parameter(torch.rand(self.n_wavelet, 3))
-
-"""
-
-
