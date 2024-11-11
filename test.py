@@ -898,7 +898,7 @@ class BasicTrajectory(object):
         np.random.seed(seed)
         self.params = np.random.uniform(size=(self.n_joint, self.n_wavelet, 3))
         self.params[:,:,2] = self.params[:,:,2] * 2.0 - 1.0 #scale in (-1.0, 1.0)
-        self.params[:,:,1] = self.params[:,:,1] * 0.9 + 0.1 #width in (0.1, 1.0)
+        self.params[:,:,1] = self.params[:,:,1] * 0.9 + 0.1 #width in (0.1, 1.0) 
 
     def getLoopSec(self):
         return self.loop_sec
