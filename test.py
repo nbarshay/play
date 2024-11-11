@@ -34,6 +34,19 @@ import csv
 
 from armsim import ArmSim, ArmSimReturn
 
+#------------------------------------
+"""
+# Project level Todo:
+
+## General improvements
+- Have Armsim start a litle early and end a litle late
+- Try different timesteps/rk method and test against gold standard to see how far we can push it
+
+
+
+
+"""
+
 
 #-------------------------------------
 
@@ -702,7 +715,7 @@ class TestModule(nn.Module):
         return -spike_reward
 
 
-def doLearning(model):
+def doLearningOld(model):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.00001)
 
@@ -776,33 +789,52 @@ class TestModule2(object):
 
         return -spike_reward
 
-def doLearning2(model):
-    params_shape = model.params.shape    
+#maxiter x100
+def optimize(state, critic, maxiter=100, verbose=False):
+    params_shape = state.params.shape    
     eval_cnt = 0
 
-    def fun(x_raw):
-        nonlocal eval_cnt
-        eval_cnt += 1
+    def setParams(upd_x):
+        state.params[:] = upd_x.reshape(params_shape)
 
-        if eval_cnt%1000==1:
-            print(f'{eval_cnt=} {model.forward()=}')
-            model.forward(verbose=True)
+    def doForward(verbose=False):
+        return critic.forward(state, verbose)
+
+    doForward() #dry run for errors
+
+
+    def fun(x):
+        nonlocal eval_cnt
+
+        if eval_cnt%1000==0 and verbose:
+            fwd = doForward(verbose=True)
+            print(f'{eval_cnt=} {fwd=}')
+
+        eval_cnt += 1
         
-        x = x_raw.reshape(params_shape)
-        model.params[:] = x
-        return model.forward()
+        setParams(x)
+        return doForward()
        
-    x0 = model.params.reshape(-1)
-    scipy.optimize.minimize(fun, x0)
+    x0 = state.params.reshape(-1)
+    ret = scipy.optimize.minimize(fun, x0, options={'maxiter':maxiter})
+
+    setParams(ret.x)
+    assert(ret.fun == doForward())
+
+    print(f'{eval_cnt=} {ret.fun=}')
 
 
 #----------------------
 
 """
 assume time runs from 0 to 1
-NOTE: only works with center and width in (0,1]
+NOTE: only works with width in (0,1]
 """
+#TODO think about if we want to keep letting center be whatever it wants
 def getPart(center, width, scale, ts):
+    center = math.fmod(center, 1.0)
+    center = center + 1.0 if center < 0.0 else center
+
     x = (np.where(ts > center, ts - center, ts - center + 1.0)/width)
 
     inside = ( 3*(x**2) - 2*(x**3) ) * (2*pi)
@@ -814,23 +846,68 @@ def getPart(center, width, scale, ts):
     def maskit(xx):
         return np.where( (x > 0.0) & (x < 1.0), xx, 0.0)
 
-    return maskit(not_prime), maskit(prime)
+    return np.stack( (maskit(not_prime), maskit(prime)), axis=-1)
 
 def getPenalty(raw_vals, a_min, a_max):
     vals = (raw_vals/(a_max-a_min)) - a_min
     return np.square(np.maximum(np.maximum(vals - 1.0, 0.0 - vals), 0.0))*1e6
 
+class FastTrajectory(object):
+    def __init__(self, base_traj):
+        self.base_traj = base_traj 
+        
+        self.n = 500
+        self.mem = np.empty((self.getNJoint(), self.n+1, 2)) #2 for f and fp
 
-class TestModule3(object):
+        ts = self._getT(np.arange(self.n+1))
+        
+        for i in range(self.getNJoint()):
+            self.mem[i,:,:] = self.base_traj.getTrajectories(i, ts)
 
-    def __init__(self, loop_sec=8.0, n_wavelet=10, n_joint=2) -> None:
+    def _getT(self, idx):
+        return (idx/self.n)*self.base_traj.getLoopSec()
+
+    
+    def getLoopSec(self):
+        return self.base_traj.getLoopSec()
+
+    def getNJoint(self):
+        return self.base_traj.getNJoint()
+
+    def getRunSecs(self):
+        return self.base_traj.getRunSecs()
+
+    def getTrajectory(self, joint_idx, t):
+        idx = int( (t/self.base_traj.getLoopSec()) * self.n )
+        assert idx >= 0 and idx < self.n
+        a, b = self.mem[joint_idx, idx, :], self.mem[joint_idx, idx+1,:]
+        a_t, b_t = self._getT(idx), self._getT(idx+1)
+        alpha = (t-a_t) / (b_t-a_t)
+
+        return b*alpha + a*(1.0-alpha)
+
+
+
+
+class BasicTrajectory(object):
+    def __init__(self, seed, loop_sec=2.0, n_wavelet=10, n_joint=2) -> None:
         self.loop_sec=loop_sec
         self.n_wavelet = n_wavelet
         self.n_joint = n_joint
 
+        np.random.seed(seed)
         self.params = np.random.uniform(size=(self.n_joint, self.n_wavelet, 3))
-        self.params[:,:,2] = self.params[:,:,2] * 2.0 - 1.0
+        self.params[:,:,2] = self.params[:,:,2] * 2.0 - 1.0 #scale in (-1.0, 1.0)
+        self.params[:,:,1] = self.params[:,:,1] * 0.9 + 0.1 #width in (0.1, 1.0)
 
+    def getLoopSec(self):
+        return self.loop_sec
+
+    def getNJoint(self):
+        return self.n_joint
+
+    def getRunSecs(self):
+        return self.loop_sec
 
     @classmethod
     def genStill(cls):
@@ -839,48 +916,117 @@ class TestModule3(object):
         ret.params[:,:,2] = 0.0 
         return ret
 
+    @classmethod
+    def genBasic(cls):
+        ret = cls.genStill()
+        ret.params[0,0,:] = (0.0, 1.0, 1.0)
+        ret.params[1,0,:] = (0.0, 1.0, 1.0)
+        return ret
+
+
+    def plot(self):
+        fig, axs = plt.subplots(self.n_joint)
+        t = np.linspace(0.0, self.getLoopSec(), 500)
+        for i in range(self.n_joint):
+            tra = self.getTrajectories(i, t)
+            axs[i].plot(t, tra[:,0], color='tab:blue')
+            axs[i].twinx().plot(t, tra[:,1], color='tab:red')
+
 
     """
     Intention is an output beween -1 and 1
     TODO: add this to optimization
     """
     def getCombo(self, joint_idx, ts):
-        res_f = np.zeros(len(ts))
-        res_fprime = np.zeros(len(ts))
+        res = np.zeros( (len(ts), 2) )
 
         for i in range(self.n_wavelet):
-            not_prime, prime = getPart(*self.params[joint_idx, i,:], ts)
-            res_f += not_prime
-            res_fprime += prime
+            res += getPart(*self.params[joint_idx, i,:], ts)
 
-        return res_f, res_fprime
+        return res
          
 
     """
-    Intention is an output in (-pi, pi)
+    Intention is an output in (-pi/2, pi/2)
     """
+    def getTrajectories(self, joint_idx, ts):
+        input_t = np.fmod(ts/self.loop_sec, 1.0)
+
+        res = self.getCombo(joint_idx, input_t)
+        res *= pi/2.0
+        res[:,1] /= self.loop_sec
+
+        return res
+
     def getTrajectory(self, joint_idx, t):
-        input_t = math.fmod(t/self.loop_sec, 1.0)
+        bla = self.getTrajectories(joint_idx, np.array([t]))
+        return bla[0][0], bla[0][1]
 
-        f, fp = self.getCombo(joint_idx, np.array([input_t]))
 
-        return f[0]*pi, fp[0]/self.loop_sec*pi
+class TestCritic(object):
+    def __init__(self, only_basic=False, use_fast_traj=True):
+        self.sim = ArmSim()
+        self.only_basic = only_basic
+        self.use_fast_traj = use_fast_traj
 
-    def forward(self, verbose=False):
+    def forward(self, state, verbose=False):
         def getBasicPenalty(jidx):
-            mean_sq_vel = np.mean(self.getCombo(jidx, np.linspace(0, 1.0, 500))[1]**2)
-            if verbose:
-                print(f'\t{jidx=} {mean_sq_vel=}')
-            return (mean_sq_vel - 10.0)**2
+            max_val = np.max(np.abs(state.getCombo(jidx, np.linspace(0, 1.0, 500))[:,0]))
+            max_val_p = np.square(np.maximum(max_val-1.0, 0.0))*1e6
 
-        param_shape_penalties = getPenalty(self.params[:,:,:2], 0.0, 1.0)
+            if verbose:
+                print(f'\t{jidx=} {max_val=} {max_val_p=}')
+
+            return max_val_p
+
+        param_shape_penalties = getPenalty(state.params[:,:,1], 0.025, 1.0)  #TODO think about this minimum
         param_shape_penalty = np.sum(param_shape_penalties)
         if verbose:
             print(f'\t{param_shape_penalty=}')
-
             
-        return getBasicPenalty(0) + getBasicPenalty(1) + param_shape_penalty
+        #TODO
+        score = getBasicPenalty(0) + getBasicPenalty(1) + param_shape_penalty
+
+        if self.only_basic:
+
+            return score
+
+        fast_traj = FastTrajectory(state) if self.use_fast_traj else state
+
+        ret = self.sim.run(fast_traj)
+        ctrl_l1 = np.mean(np.abs(ret.ctrls))
+        #ctrl_l1_penalty = (ctrl_l1 - 10.0)**2
+        ctrl_l1_penalty = ctrl_l1**2
+
+        ctrl_l2 = float(np.mean(np.square(ret.ctrls)))
+        
+        vels = ret.getTipVels()
+        vel_raw = float(np.sqrt(vels[len(vels)//4]) + np.sqrt(vels[len(vels)*3//4]))
+        vel_reward = float((vel_raw*10.0)**2)
+
+        pos_a, pos_b = float(ret.qs[0,len(vels)//4]), float(ret.qs[0,len(vels)*3//4])
+        pos_penalty = float((pos_a - pi/4)**2) + float((pos_b + pi/4)**2)
+
+        pos_aa, pos_bb = float(ret.qs[1,len(vels)//4]), float(ret.qs[1,len(vels)*3//4])
+        pos_penalty2 = float((pos_aa)**2) + float((pos_bb)**2)
+
+        off = np.mean((ret.qs[1]*10)**2)
+        off2 = np.max(ret.tips[:,0]) - np.min(ret.tips[:, 0])
 
 
+        if verbose:
+            print(f'{ctrl_l1=}  {vel_raw=} {vel_reward=} {pos_a=} {pos_b=} {ctrl_l2=} {pos_penalty=} {pos_bb=} {pos_aa=} {pos_penalty2=} {off=} {off2=}')
 
-    
+        #score += ctrl_l1_penalty
+        score += ctrl_l2
+        #score += pos_penalty*1000
+        #score += pos_penalty2*1000
+        score += ((2.5-off2)**2)*1000
+        #score -= vel_reward
+
+        if verbose:
+            print(f'{score=}')
+
+        return score
+
+ 

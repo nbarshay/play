@@ -1,17 +1,49 @@
 import mujoco as mj
 from mujoco.glfw import glfw
 import os
+from pylab import plt
+import time
 
 import numpy as np
 
 class ArmSimReturn(object):
-    def __init__(self, ts, qs, q_refs, qdots, qdot_refs, ctrls):
+    def __init__(self, n_joint, ts, qs, q_refs, qdots, qdot_refs, ctrls, tips):
+        self.n_joint = n_joint
         self.ts = ts
         self.qs = qs
         self.q_refs = q_refs
         self.qdots = qdots
         self.qdot_refs = qdot_refs
         self.ctrls = ctrls
+
+        self.tips = tips
+
+    def getTipVels(self):
+        padded = np.pad(self.tips, [(1,1), (0,0)], mode='edge')
+        vels = np.sqrt(np.sum(np.square(padded[2:] - padded[:-2]), axis=1))
+        return vels
+
+    def plot(self):
+        fig, axs = plt.subplots(self.n_joint+1)
+        for i in range(self.n_joint):
+            axs[i].plot(self.ts, self.qs[i,:], color='tab:blue')
+            axs[i].twinx().plot(self.ts, self.qdots[i,:], color='tab:red')
+            axs[i].twinx().plot(self.ts, self.ctrls[i,:], color='tab:olive')
+
+        for i in range(3):
+            axs[-1].plot(self.ts, self.tips[:,i])
+        axs[-1].twinx().plot(self.ts, self.getTipVels(), color='tab:red')
+
+    def printStats(self):
+        for j in range(self.n_joint):
+            ctrl_l1 = float(np.mean(np.abs(self.ctrls[j])))
+            q_l2_error = float(np.mean(np.square(self.q_refs[j] - self.qs[j])))
+            qdot_l2_error = float(np.mean(np.square(self.qdot_refs[j] - self.qdots[j])))
+            print(f'{j=} {ctrl_l1=} {q_l2_error=} {qdot_l2_error=}')
+
+
+
+
 
 
 class ArmSim(object):
@@ -31,7 +63,10 @@ class ArmSim(object):
         self.n_joint = 2
 
 
-    def run(self, traj, run_secs, show=False):
+    def run(self, traj, show=False):
+        run_secs = traj.getRunSecs()
+        if(show):
+            run_secs *= 10.0
 
         ts = []
 
@@ -42,6 +77,9 @@ class ArmSim(object):
         qdot_refs = [[] for i in range(self.n_joint)]
 
         ctrls = [[] for i in range(self.n_joint)]
+        
+        tips = []
+        
 
         def controller(model, data):
             #put the controller here. This function is called inside the simulation.
@@ -54,6 +92,7 @@ class ArmSim(object):
 
             for i in range(self.n_joint):
                 q_ref[i], qdot_ref[i] = traj.getTrajectory(i, time)
+
 
             #model-based control (feedback linearization)
             #tau = M*(PD-control) + f
@@ -76,6 +115,7 @@ class ArmSim(object):
                 qdots[i].append(data.qvel[i])
                 qdot_refs[i].append(qdot_ref[i])
                 ctrls[i].append(data.ctrl[i])
+            tips.append(data.site_xpos[0].copy())
 
         #TODO lock mj until complete
 
@@ -102,20 +142,25 @@ class ArmSim(object):
 
         for i in range(self.n_joint):
             self.data.qpos[i], self.data.qvel[i] = traj.getTrajectory(i, 0.0)
+            self.data.qvel[i] = 0.0
 
 
         mj.set_mjcb_control(controller)
 
-        while True:
-            if self.data.time >= run_secs:
-                break
+        start_wall = time.time()
+
+        while self.data.time < run_secs:
 
             time_prev = self.data.time
 
-            while (self.data.time - time_prev < 1.0/60.0):
+            while (self.data.time - time_prev < 1.0/60.0 and self.data.time < run_secs):
                 mj.mj_step(self.model, self.data)
 
+
             if show:
+                while(time.time() - start_wall < self.data.time):
+                    pass
+
                 viewport_width, viewport_height = glfw.get_framebuffer_size(
                     window)
                 viewport = mj.MjrRect(0, 0, viewport_width, viewport_height)
@@ -138,7 +183,7 @@ class ArmSim(object):
         mj.mj_resetData(self.model, self.data)
         mj.set_mjcb_control(None)
 
-        return ArmSimReturn(np.array(ts), np.array(qs), np.array(q_refs), np.array(qdots), np.array(qdot_refs), np.array(ctrls))
+        return ArmSimReturn(self.n_joint, np.array(ts), np.array(qs), np.array(q_refs), np.array(qdots), np.array(qdot_refs), np.array(ctrls), np.array(tips))
 
 
 
