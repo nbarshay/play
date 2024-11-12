@@ -1,8 +1,7 @@
-import test
+from test import *
 
-traj = test.TestModule3.genStill()
-sim = test.ArmSim()
 
-sim.run(traj, traj.loop_sec, show=False)
-
-sim2 = test.ArmSim()
+if __name__ == '__main__':
+    traj = BasicTrajectory(seed=0)
+    critic1 = TestCritic()
+    optimize(traj, critic1, maxiter=100, verbose=True)

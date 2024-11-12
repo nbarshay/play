@@ -4,4 +4,7 @@ with pool on local machine x6 is 1.9s
 
 my jac gets to 242 in 10612 evals
 
+with parallel takes 28 seconds
+(w/o is ... 176)
+
 

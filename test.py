@@ -790,36 +790,48 @@ class TestModule2(object):
 
         return -spike_reward
 
+
+class FuncWrap(object):
+    def __init__(self, state, critic):
+        self.state = state
+        self.critic = critic
+    
+        self.params_shape = state.params.shape    
+
+    def getWithX(self, x):
+        temp = deepcopy(self)
+        temp.setX(x)
+        return temp
+
+    def eval(self, x):
+        return self.critic.forward(self.getWithX(x).state)
+
+    def getX(self):
+        return self.state.params.reshape(-1)
+
+    def setX(self, x):
+        self.state.params[:] = x.reshape(self.params_shape)
+
+
+
+
+
 #maxiter x100
 def optimize(state, critic, maxiter=100, verbose=False):
-    params_shape = state.params.shape    
+    pool = multiprocessing.Pool()
+
     params_n = state.params.size
     eval_cnt = 0
 
-    def setParams(upd_x):
-        state.params[:] = upd_x.reshape(params_shape)
+    wrap = FuncWrap(state, critic)
 
-    def doForward(verbose=False):
-        return critic.forward(state, verbose)
+    fun = wrap.eval
+    x0 = wrap.getX()
 
-    doForward() #dry run for errors
-
-
-    def fun(x):
-        nonlocal eval_cnt
-
-        if eval_cnt%1000==0 and verbose:
-            fwd = doForward(verbose=True)
-            print(f'{eval_cnt=} {fwd=}')
-
-        eval_cnt += 1
-        
-        setParams(x)
-        return doForward()
+    fun(x0) #dry run for errors
 
     def jac(x):
-        fb = fun(x)
-        xs = []
+        xs = [x]
         hs = np.empty((params_n,))
         for i in range(params_n):
             h = 1e-6
@@ -830,17 +842,19 @@ def optimize(state, critic, maxiter=100, verbose=False):
             xt[i] += h
             xs.append(xt)
         
-        evals = np.array([fun(xx) for xx in xs])
+        raw_evals = pool.map(fun, xs)
+
+        fb = raw_evals[0]
+        evals = np.array(raw_evals[1:])
 
         ret = (evals - fb)/hs
         return ret
        
-    x0 = state.params.reshape(-1)
     ret = scipy.optimize.minimize(fun, x0, jac=jac, options={'maxiter':maxiter})
-    #ret = scipy.optimize.minimize(fun, x0, options={'maxiter':maxiter})
 
-    setParams(ret.x)
-    assert(ret.fun == doForward())
+    wrap.setX(ret.x)
+
+    assert(ret.fun == critic.forward(state))
 
     print(f'{eval_cnt=} {ret.fun=}')
 
