@@ -47,7 +47,13 @@ class ArmSimReturn(object):
 
 
 class ArmSim(object):
-    def __init__(self):
+
+
+    @classmethod
+    def run(cls, traj, show=False):
+        n_joint = traj.getNJoint()
+        assert(n_joint == 2)
+
         xml_path = '2D_double_pendulum.xml' #xml file (assumes this is in the same folder as this file)
 
         #get the full path
@@ -56,68 +62,29 @@ class ArmSim(object):
         xml_path = abspath
 
         # MuJoCo data structures
-        self.model = mj.MjModel.from_xml_path(xml_path)  # MuJoCo model
-        self.data = mj.MjData(self.model)                # MuJoCo data
+        model = mj.MjModel.from_xml_path(xml_path)  # MuJoCo model
+        data = mj.MjData(model)                # MuJoCo data
         
 
-        self.n_joint = 2
 
 
-    def run(self, traj, show=False):
+
+
         run_secs = traj.getRunSecs()
         if(show):
             run_secs *= 10.0
 
         ts = []
 
-        qs = [[] for i in range(self.n_joint)]
-        q_refs = [[] for i in range(self.n_joint)]
+        qs = [[] for i in range(n_joint)]
+        q_refs = [[] for i in range(n_joint)]
 
-        qdots = [[] for i in range(self.n_joint)]
-        qdot_refs = [[] for i in range(self.n_joint)]
+        qdots = [[] for i in range(n_joint)]
+        qdot_refs = [[] for i in range(n_joint)]
 
-        ctrls = [[] for i in range(self.n_joint)]
+        ctrls = [[] for i in range(n_joint)]
         
         tips = []
-        
-
-        def controller(model, data):
-            #put the controller here. This function is called inside the simulation.
-            #pass
-
-            time = data.time
-
-            q_ref = np.empty(self.n_joint)
-            qdot_ref = np.empty(self.n_joint)
-
-            for i in range(self.n_joint):
-                q_ref[i], qdot_ref[i] = traj.getTrajectory(i, time)
-
-
-            #model-based control (feedback linearization)
-            #tau = M*(PD-control) + f
-            M = np.zeros((self.n_joint,self.n_joint))
-            mj.mj_fullM(model,M,data.qM)
-            f = np.array([data.qfrc_bias[i] for i in range(self.n_joint)])
-
-            kp = 500
-            kd = 2*np.sqrt(kp)
-            pd_control = np.array([-kp*(data.qpos[i]-q_ref[i])-kd*(data.qvel[i]-qdot_ref[i]) for i in range(self.n_joint)])
-            tau_M_pd_control = np.matmul(M,pd_control)
-            tau = np.add(tau_M_pd_control,f)
-            
-            data.ctrl[:self.n_joint] = tau
-
-            ts.append(data.time)
-            for i in range(self.n_joint):
-                qs[i].append(data.qpos[i])
-                q_refs[i].append(q_ref[i])
-                qdots[i].append(data.qvel[i])
-                qdot_refs[i].append(qdot_ref[i])
-                ctrls[i].append(data.ctrl[i])
-            tips.append(data.site_xpos[0].copy())
-
-        #TODO lock mj until complete
 
         if show:
             cam = mj.MjvCamera()                        # Abstract camera
@@ -132,33 +99,65 @@ class ArmSim(object):
             # initialize visualization data structures
             mj.mjv_defaultCamera(cam)
             mj.mjv_defaultOption(opt)
-            scene = mj.MjvScene(self.model, maxgeom=10000)
-            context = mj.MjrContext(self.model, mj.mjtFontScale.mjFONTSCALE_150.value)
+            scene = mj.MjvScene(model, maxgeom=10000)
+            context = mj.MjrContext(model, mj.mjtFontScale.mjFONTSCALE_150.value)
 
 
             # Example on how to set camera configuration
             cam.azimuth = 90 ; cam.elevation = 5 ; cam.distance =  6
             cam.lookat =np.array([ 0.0 , 0.0 , 0.0 ])
 
-        for i in range(self.n_joint):
-            self.data.qpos[i], self.data.qvel[i] = traj.getTrajectory(i, 0.0)
-            self.data.qvel[i] = 0.0
+        for i in range(n_joint):
+            data.qpos[i], data.qvel[i] = traj.getTrajectory(i, 0.0)
+            data.qvel[i] = 0.0
 
 
-        mj.set_mjcb_control(controller)
+        if show:
+            start_wall = time.time()
 
-        start_wall = time.time()
+        #for use in loop
+        q_ref = np.empty(n_joint)
+        qdot_ref = np.empty(n_joint)
 
-        while self.data.time < run_secs:
+        while data.time < run_secs:
 
-            time_prev = self.data.time
+            time_prev = data.time
 
-            while (self.data.time - time_prev < 1.0/60.0 and self.data.time < run_secs):
-                mj.mj_step(self.model, self.data)
+            while (data.time - time_prev < 1.0/60.0 and data.time < run_secs):
+                mj.mj_step1(model, data)
+
+                for i in range(n_joint):
+                    q_ref[i], qdot_ref[i] = traj.getTrajectory(i, data.time)
+
+
+                #model-based control (feedback linearization)
+                #tau = M*(PD-control) + f
+                M = np.zeros((n_joint,n_joint))
+                mj.mj_fullM(model,M,data.qM)
+                f = np.array([data.qfrc_bias[i] for i in range(n_joint)])
+
+                kp = 500
+                kd = 2*np.sqrt(kp)
+                pd_control = np.array([-kp*(data.qpos[i]-q_ref[i])-kd*(data.qvel[i]-qdot_ref[i]) for i in range(n_joint)])
+                tau_M_pd_control = np.matmul(M,pd_control)
+                tau = np.add(tau_M_pd_control,f)
+                
+                data.ctrl[:n_joint] = tau
+
+                ts.append(data.time)
+                for i in range(n_joint):
+                    qs[i].append(data.qpos[i])
+                    q_refs[i].append(q_ref[i])
+                    qdots[i].append(data.qvel[i])
+                    qdot_refs[i].append(qdot_ref[i])
+                    ctrls[i].append(data.ctrl[i])
+                tips.append(data.site_xpos[0].copy())
+
+                mj.mj_step2(model, data)
 
 
             if show:
-                while(time.time() - start_wall < self.data.time):
+                while(time.time() - start_wall < data.time):
                     pass
 
                 viewport_width, viewport_height = glfw.get_framebuffer_size(
@@ -166,7 +165,7 @@ class ArmSim(object):
                 viewport = mj.MjrRect(0, 0, viewport_width, viewport_height)
 
                 # Update scene and render
-                mj.mjv_updateScene(self.model, self.data, opt, None, cam,
+                mj.mjv_updateScene(model, data, opt, None, cam,
                                    mj.mjtCatBit.mjCAT_ALL.value, scene)
                 mj.mjr_render(viewport, scene, context)
 
@@ -179,11 +178,8 @@ class ArmSim(object):
         if show:
             glfw.terminate()
 
-        #TODO: always do this
-        mj.mj_resetData(self.model, self.data)
-        mj.set_mjcb_control(None)
 
-        return ArmSimReturn(self.n_joint, np.array(ts), np.array(qs), np.array(q_refs), np.array(qdots), np.array(qdot_refs), np.array(ctrls), np.array(tips))
+        return ArmSimReturn(n_joint, np.array(ts), np.array(qs), np.array(q_refs), np.array(qdots), np.array(qdot_refs), np.array(ctrls), np.array(tips))
 
 
 

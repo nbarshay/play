@@ -964,8 +964,7 @@ class BasicTrajectory(object):
 
 
 class TestCritic(object):
-    def __init__(self, only_basic=False, use_fast_traj=True):
-        self.sim = ArmSim()
+    def __init__(self, only_basic=False, use_fast_traj=True, pool=None):
         self.only_basic = only_basic
         self.use_fast_traj = use_fast_traj
 
@@ -993,7 +992,7 @@ class TestCritic(object):
 
         fast_traj = FastTrajectory(state) if self.use_fast_traj else state
 
-        ret = self.sim.run(fast_traj)
+        ret = ArmSim.run(fast_traj)
         ctrl_l1 = np.mean(np.abs(ret.ctrls))
         #ctrl_l1_penalty = (ctrl_l1 - 10.0)**2
         ctrl_l1_penalty = ctrl_l1**2
