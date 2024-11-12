@@ -74,17 +74,20 @@ class ArmSim(object):
         if(show):
             run_secs *= 10.0
 
-        ts = []
+        ret_n = 1000
 
-        qs = [[] for i in range(n_joint)]
-        q_refs = [[] for i in range(n_joint)]
+        ts = np.empty((ret_n,))
 
-        qdots = [[] for i in range(n_joint)]
-        qdot_refs = [[] for i in range(n_joint)]
 
-        ctrls = [[] for i in range(n_joint)]
+        qs = np.empty((n_joint, ret_n)) 
+        q_refs = np.empty((n_joint, ret_n))
+
+        qdots = np.empty((n_joint, ret_n))
+        qdot_refs = np.empty((n_joint, ret_n))
+
+        ctrls = np.empty((n_joint, ret_n))
         
-        tips = []
+        tips = np.empty((ret_n, 3))
 
         if show:
             cam = mj.MjvCamera()                        # Abstract camera
@@ -115,6 +118,8 @@ class ArmSim(object):
         if show:
             start_wall = time.time()
 
+        idx = 0
+
         #for use in loop
         q_ref = np.empty(n_joint)
         qdot_ref = np.empty(n_joint)
@@ -144,14 +149,14 @@ class ArmSim(object):
                 
                 data.ctrl[:n_joint] = tau
 
-                ts.append(data.time)
-                for i in range(n_joint):
-                    qs[i].append(data.qpos[i])
-                    q_refs[i].append(q_ref[i])
-                    qdots[i].append(data.qvel[i])
-                    qdot_refs[i].append(qdot_ref[i])
-                    ctrls[i].append(data.ctrl[i])
-                tips.append(data.site_xpos[0].copy())
+                ts[idx] = data.time
+                qs[:,idx] = data.qpos[:n_joint]
+                q_refs[:,idx] = q_ref[:]
+                qdots[:,idx] = data.qvel[:n_joint]
+                qdot_refs[:,idx] = qdot_ref[:]
+                ctrls[:,idx] = data.ctrl[:]
+                tips[idx,:] = data.site_xpos[0]
+                idx += 1
 
                 mj.mj_step2(model, data)
 
@@ -178,8 +183,9 @@ class ArmSim(object):
         if show:
             glfw.terminate()
 
+        assert idx == ret_n
 
-        return ArmSimReturn(n_joint, np.array(ts), np.array(qs), np.array(q_refs), np.array(qdots), np.array(qdot_refs), np.array(ctrls), np.array(tips))
+        return ArmSimReturn(n_joint, (ts), (qs), (q_refs), (qdots), (qdot_refs), (ctrls), (tips))
 
 
 

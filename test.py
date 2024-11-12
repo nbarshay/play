@@ -6,6 +6,7 @@ from math import cos, pi, sqrt, exp, log, pi
 import random
 import matplotlib.pyplot as plt
 import scipy
+import multiprocessing
 
 import torch
 from torch import nn
@@ -792,6 +793,7 @@ class TestModule2(object):
 #maxiter x100
 def optimize(state, critic, maxiter=100, verbose=False):
     params_shape = state.params.shape    
+    params_n = state.params.size
     eval_cnt = 0
 
     def setParams(upd_x):
@@ -814,9 +816,28 @@ def optimize(state, critic, maxiter=100, verbose=False):
         
         setParams(x)
         return doForward()
+
+    def jac(x):
+        fb = fun(x)
+        xs = []
+        hs = np.empty((params_n,))
+        for i in range(params_n):
+            h = 1e-6
+
+            hs[i] = h
+
+            xt = x.copy()
+            xt[i] += h
+            xs.append(xt)
+        
+        evals = np.array([fun(xx) for xx in xs])
+
+        ret = (evals - fb)/hs
+        return ret
        
     x0 = state.params.reshape(-1)
-    ret = scipy.optimize.minimize(fun, x0, options={'maxiter':maxiter})
+    ret = scipy.optimize.minimize(fun, x0, jac=jac, options={'maxiter':maxiter})
+    #ret = scipy.optimize.minimize(fun, x0, options={'maxiter':maxiter})
 
     setParams(ret.x)
     assert(ret.fun == doForward())
