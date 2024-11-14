@@ -821,7 +821,8 @@ def optimize(state, critic, maxiter=100, verbose=False):
     pool = multiprocessing.Pool()
 
     params_n = state.params.size
-    eval_cnt = 0
+    jac_eval_cnt = 0
+    local_eval_cnt = 0
 
     wrap = FuncWrap(state, critic)
 
@@ -830,7 +831,16 @@ def optimize(state, critic, maxiter=100, verbose=False):
 
     fun(x0) #dry run for errors
 
+    def local_fun(x):
+        nonlocal local_eval_cnt
+
+        local_eval_cnt += 1
+        return fun(x)
+        
+
     def jac(x):
+        nonlocal jac_eval_cnt
+
         xs = [x]
         hs = np.empty((params_n,))
         for i in range(params_n):
@@ -842,6 +852,7 @@ def optimize(state, critic, maxiter=100, verbose=False):
             xt[i] += h
             xs.append(xt)
         
+        jac_eval_cnt += len(xs)
         raw_evals = pool.map(fun, xs)
 
         fb = raw_evals[0]
@@ -856,7 +867,7 @@ def optimize(state, critic, maxiter=100, verbose=False):
 
     assert(ret.fun == critic.forward(state))
 
-    print(f'{eval_cnt=} {ret.fun=}')
+    print(f'{jac_eval_cnt=} {local_eval_cnt=} {ret.fun=}')
 
 
 #----------------------
