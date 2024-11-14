@@ -829,7 +829,8 @@ def optimize(state, critic, maxiter=100, verbose=False):
     fun = wrap.eval
     x0 = wrap.getX()
 
-    fun(x0) #dry run for errors
+    ret_initial = fun(x0) #dry run for errors
+    print(f'{ret_initial=}')
 
     def local_fun(x):
         nonlocal local_eval_cnt
