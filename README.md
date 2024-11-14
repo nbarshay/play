@@ -1,9 +1,19 @@
 # Setup
-- python 3.9
+
+## Instructions (roughly)
+- apt-get update
+- apt-get install python3.10, python3.10-venv
+- python -m venv env
+- pip install -r requirements.txt
+
+## More details
 - venv https://docs.python.org/3/tutorial/venv.html
     - create using desired python version
     - venv lives in env folder of repo
         - We run: `pip freeze > requirements.txt` 
+
+
+
 
 
 # Ipython
